@@ -93,7 +93,6 @@ public class PSDEditorWindow : EditorWindow {
                     EditorGUILayout.HelpBox("Pixels To Unit Size should be greater than 0.", MessageType.Warning);
                 }
                 importIntoSelected = EditorGUILayout.Toggle("Import into selected object", importIntoSelected);
-                useSizeDelta = EditorGUILayout.Toggle("Use Size Delta", useSizeDelta);
                 if (GUILayout.Button("Create atlas")) {
                     CreateAtlas();
                 }
@@ -142,8 +141,10 @@ public class PSDEditorWindow : EditorWindow {
     }
 
     private void ExportLayers() {
+        Dictionary<string, int> layers = new Dictionary<string, int>();
         foreach (Layer layer in psd.Layers) {
             if (layer.Visible) {
+                string name = GetLayerName(layers, layer);
                 Texture2D tex = CreateTexture(layer);
                 if (tex == null) continue;
                 SaveAsset(tex, "_" + layer.Name);
@@ -162,13 +163,14 @@ public class PSDEditorWindow : EditorWindow {
 
         int zOrder = 0;
         GameObject root = new GameObject(fileName);
+        Dictionary<string, int> layers = new Dictionary<string, int>();
         foreach (var layer in psd.Layers) {
             if (layer.Visible && layer.Rect.width > 0 && layer.Rect.height > 0) {
                 Texture2D tex = CreateTexture(layer);
                 // Add the texture to the Texture Array
                 textures.Add(tex);
-
-                GameObject go = new GameObject(layer.Name);
+                string name = GetLayerName(layers, layer);
+                GameObject go = new GameObject(name);
                 SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
                 go.transform.position = new Vector3((layer.Rect.width / 2 + layer.Rect.x) / pixelsToUnitSize, (-layer.Rect.height / 2 - layer.Rect.y) / pixelsToUnitSize, 0);
                 // Add the sprite renderer to the SpriteRenderer Array
@@ -240,13 +242,15 @@ public class PSDEditorWindow : EditorWindow {
         if (importIntoSelected && selectedTransform != null) {
             root.transform.parent = selectedTransform;
         }
+        Dictionary<string, int> layers = new Dictionary<string, int>();
         foreach (var layer in psd.Layers) {
             if (layer.Visible && layer.Rect.width > 0 && layer.Rect.height > 0) {
                 Texture2D tex = CreateTexture(layer);
-                Sprite spr = SaveAsset(tex, "_" + layer.Name);
+                string name = GetLayerName(layers, layer);
+                Sprite spr = SaveAsset(tex, "_" + name);
                 DestroyImmediate(tex);
 
-                GameObject go = new GameObject(layer.Name);
+                GameObject go = new GameObject(name);
                 SpriteRenderer sr = go.AddComponent<SpriteRenderer>();
                 sr.sprite = spr;
                 sr.sortingOrder = zOrder++;
@@ -254,6 +258,17 @@ public class PSDEditorWindow : EditorWindow {
                 go.transform.parent = root.transform;
             }
         }
+    }
+
+    private static string GetLayerName(Dictionary<string, int> layers, Layer layer) {
+        string name = layer.Name;
+        if (layers.ContainsKey(name)) {
+            name += (layers[name]++).ToString();
+        }
+        else {
+            layers.Add(name, 1);
+        }
+        return name;
     }
     private void CreateImages() {
         if (importIntoSelected) {
@@ -272,33 +287,47 @@ public class PSDEditorWindow : EditorWindow {
         rtransf.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, 0);
         rtransf.sizeDelta = Vector2.zero;
         rtransf.localPosition = Vector3.zero;
-
+        Dictionary<string, int> layers = new Dictionary<string, int>();
         foreach (var layer in psd.Layers) {
             if (layer.Visible && layer.Rect.width > 0 && layer.Rect.height > 0) {
+                Sprite spr = null;
+                float texWidth;
+                float texHeight;
+                string name;
                 var targetOrder = zOrder++;
-                Texture2D tex = CreateTexture(layer);
-                Sprite spr = SaveAsset(tex, "_" + layer.Name);
-                DestroyImmediate(tex);
+                {
+                    Texture2D tex = CreateTexture(layer);
+                    texWidth = tex.width;
+                    texHeight = tex.height;
+                    name = GetLayerName(layers, layer);
+                    spr = SaveAsset(tex, "_" + name);
+                    DestroyImmediate(tex);
+                }
 
-                GameObject go = new GameObject(layer.Name);
+                GameObject go = new GameObject(name);
                 go.transform.parent = root.transform;
                 go.transform.SetSiblingIndex(targetOrder);
                 UnityEngine.UI.Image image = go.AddComponent<UnityEngine.UI.Image>();
                 image.sprite = spr;
-                image.rectTransform.localPosition = new Vector3((layer.Rect.x), (layer.Rect.y * -1) - layer.Rect.height, targetOrder * 5);
+                image.rectTransform.localPosition = new Vector3((layer.Rect.x), (layer.Rect.y * -1) - layer.Rect.height, targetOrder * -5);
                 image.rectTransform.anchorMax = new Vector2(0, 1);
                 image.rectTransform.anchorMin = new Vector2(0, 1);
                 image.rectTransform.pivot = new Vector2(0f, 0f);
-                image.rectTransform.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, layer.Rect.width);
-                image.rectTransform.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, layer.Rect.height);
+                image.rectTransform.sizeDelta = new Vector2(layer.Rect.width, layer.Rect.height);
+                //image.rectTransform.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, layer.Rect.width);
+                //image.rectTransform.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, layer.Rect.height);
+                Debug.Log(string.Format("Layer: {0}. Width: {1}. Height: {2}. Texture: Width: {3}. Height: {4}", name, layer.Rect.width, layer.Rect.height, texWidth, texHeight));
             }
         }
     }
 
     private Sprite SaveAsset(Texture2D tex, string suffix) {
         string assetPath = AssetDatabase.GetAssetPath(image);
-        string path = Path.Combine(Path.GetDirectoryName(assetPath),
-            Path.GetFileNameWithoutExtension(assetPath) + suffix + ".png");
+        string filename = Path.GetFileNameWithoutExtension(assetPath) + suffix;
+        foreach (char c in System.IO.Path.GetInvalidFileNameChars()) {
+            filename = filename.Replace(c, '_');
+        }
+        string path = Path.Combine(Path.GetDirectoryName(assetPath), string.Concat(filename, ".png"));
 
         byte[] buf = tex.EncodeToPNG();
         File.WriteAllBytes(path, buf);
